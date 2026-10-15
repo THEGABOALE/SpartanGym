@@ -1,5 +1,6 @@
 package ni.edu.uam.SpartanGymAPI.services;
 
+import jakarta.annotation.PostConstruct;
 import ni.edu.uam.SpartanGymAPI.exceptions.*;
 import lombok.RequiredArgsConstructor;
 import ni.edu.uam.SpartanGymAPI.dto.AsistenciaQrRequest;
@@ -14,6 +15,8 @@ import ni.edu.uam.SpartanGymAPI.repositories.AsistenciaRepository;
 import ni.edu.uam.SpartanGymAPI.repositories.MembresiaSocioRepository;
 import ni.edu.uam.SpartanGymAPI.repositories.SocioRepository;
 import ni.edu.uam.SpartanGymAPI.repositories.UsuarioRepository;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.env.Environment;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,6 +28,7 @@ import java.security.MessageDigest;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
@@ -38,12 +42,42 @@ public class AsistenciaService {
     private static final String QR_WEB_PREFIX = "SPARTAN_GYM_VALIDACION_WEB";
     private static final long QR_TTL_SECONDS = 180;
     private static final String HMAC_ALGORITHM = "HmacSHA256";
+    private static final int LARGO_MINIMO_SECRETO = 32;
+    // Solo se usa en el perfil "local". Fuera de ese perfil, app.qr.secret es obligatorio.
+    private static final String SECRETO_DESARROLLO = "secreto-qr-solo-para-desarrollo-local-no-usar-en-produccion";
+    // Valor que antes se usaba por defecto y esta publicado en el repositorio: nunca es valido en produccion.
+    private static final String SECRETO_PUBLICO_ANTIGUO = "spartan-gym-attendance-secret";
 
     private final AsistenciaRepository asistenciaRepository;
     private final SocioRepository socioRepository;
     private final UsuarioRepository usuarioRepository;
     private final MembresiaSocioRepository membresiaSocioRepository;
     private final QrWebSessionStore sesionesQrWeb;
+    private final Environment environment;
+
+    @Value("${app.qr.secret:}")
+    private String qrSecret;
+
+    // Falla el arranque si falta ATTENDANCE_QR_SECRET fuera del perfil local, en vez de firmar
+    // los QR con un valor fijo que cualquiera puede leer en el repositorio y usar para fabricar QR.
+    @PostConstruct
+    void validarSecreto() {
+        boolean local = Arrays.asList(environment.getActiveProfiles()).contains("local");
+        if (qrSecret == null || qrSecret.isBlank()) {
+            if (local) {
+                qrSecret = SECRETO_DESARROLLO;
+                return;
+            }
+            throw new IllegalStateException(
+                    "app.qr.secret no esta configurado (variable de entorno ATTENDANCE_QR_SECRET). "
+                            + "Es obligatoria fuera del perfil 'local'.");
+        }
+        if (!local && (qrSecret.length() < LARGO_MINIMO_SECRETO || SECRETO_PUBLICO_ANTIGUO.equals(qrSecret))) {
+            throw new IllegalStateException(
+                    "ATTENDANCE_QR_SECRET es demasiado debil: debe tener al menos " + LARGO_MINIMO_SECRETO
+                            + " caracteres y no puede ser el valor publico del repositorio.");
+        }
+    }
 
     @Transactional
     public Asistencia registrarEntrada(AsistenciaRequest request) {
@@ -321,9 +355,8 @@ public class AsistenciaService {
 
     private String firmar(String datos) {
         try {
-            String secreto = System.getenv().getOrDefault("ATTENDANCE_QR_SECRET", "spartan-gym-attendance-secret");
             Mac mac = Mac.getInstance(HMAC_ALGORITHM);
-            mac.init(new SecretKeySpec(secreto.getBytes(StandardCharsets.UTF_8), HMAC_ALGORITHM));
+            mac.init(new SecretKeySpec(qrSecret.getBytes(StandardCharsets.UTF_8), HMAC_ALGORITHM));
             byte[] firma = mac.doFinal(datos.getBytes(StandardCharsets.UTF_8));
             return Base64.getUrlEncoder().withoutPadding().encodeToString(firma);
         } catch (Exception e) {
