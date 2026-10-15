@@ -4,6 +4,7 @@ import ni.edu.uam.SpartanGymAPI.exceptions.ConflictoException;
 import ni.edu.uam.SpartanGymAPI.exceptions.RecursoNoEncontradoException;
 import ni.edu.uam.SpartanGymAPI.exceptions.RespuestaError;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -108,5 +109,14 @@ class GlobalExceptionHandlerTest {
 
         assertEquals(HttpStatus.BAD_REQUEST, r.getStatusCode());
         assertEquals("x", r.getBody());
+    }
+
+    @Test
+    void falloDeConcurrencia_esUn409ReintentableYNoUn500() {
+        ResponseEntity<String> r = handler.handleConcurrencia(
+                new CannotAcquireLockException("deadlock detected"), peticionProblem());
+
+        assertEquals(HttpStatus.CONFLICT, r.getStatusCode());
+        assertEquals("CONFLICTO", json.readTree(r.getBody()).get("codigo").asString());
     }
 }

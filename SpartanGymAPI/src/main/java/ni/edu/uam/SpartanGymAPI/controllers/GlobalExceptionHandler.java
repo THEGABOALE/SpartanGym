@@ -5,6 +5,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import ni.edu.uam.SpartanGymAPI.exceptions.ApiException;
 import ni.edu.uam.SpartanGymAPI.exceptions.RespuestaError;
+import org.springframework.dao.ConcurrencyFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -78,6 +79,15 @@ public class GlobalExceptionHandler {
         log.warn("Violación de integridad de datos en {}: {}", origen(request), ex.getMostSpecificCause().getMessage());
         return respuestaError.construir(HttpStatus.CONFLICT, "CONFLICTO",
                 "Ya existe un registro con esos datos (por ejemplo, el correo ya está en uso).", request);
+    }
+
+    // Otra transaccion tenia bloqueados los mismos datos (timeout de bloqueo, deadlock, version
+    // desactualizada). No es un error del servidor ni del usuario: reintentar suele bastar -> 409.
+    @ExceptionHandler(ConcurrencyFailureException.class)
+    public ResponseEntity<String> handleConcurrencia(ConcurrencyFailureException ex, HttpServletRequest request) {
+        log.warn("Conflicto de concurrencia en {}: {}", origen(request), ex.getMostSpecificCause().getMessage());
+        return respuestaError.construir(HttpStatus.CONFLICT, "CONFLICTO",
+                "Otra operacion esta modificando los mismos datos. Intenta de nuevo en unos segundos.", request);
     }
 
     // Excepciones propias de Spring MVC (404 de ruta desconocida, 405, etc.): conservan su status.

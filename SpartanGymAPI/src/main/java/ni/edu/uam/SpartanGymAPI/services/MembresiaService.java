@@ -30,8 +30,20 @@ public class MembresiaService {
 
     @Transactional
     public TipoMembresia crearTipo(TipoMembresiaRequest request) {
+        // La base ya rechaza precios negativos o duracion 0 (CHECK), pero con un error de
+        // integridad generico; aqui el usuario recibe el motivo real.
+        if (request.getNombre() == null || request.getNombre().isBlank()) {
+            throw new ReglaNegocioException("El nombre del plan es obligatorio");
+        }
+        if (request.getDuracionDias() == null || request.getDuracionDias() <= 0) {
+            throw new ReglaNegocioException("La duración del plan debe ser de al menos 1 día");
+        }
+        if (request.getPrecio() == null || request.getPrecio().signum() < 0) {
+            throw new ReglaNegocioException("El precio del plan no puede ser negativo");
+        }
+
         TipoMembresia tipo = new TipoMembresia();
-        tipo.setNombre(request.getNombre());
+        tipo.setNombre(request.getNombre().trim());
         tipo.setDuracionDias(request.getDuracionDias());
         tipo.setPrecio(request.getPrecio());
         return tipoMembresiaRepository.save(tipo);
