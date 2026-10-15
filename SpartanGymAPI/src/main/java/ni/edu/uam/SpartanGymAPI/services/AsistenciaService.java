@@ -29,8 +29,6 @@ import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 
 @Service
 @RequiredArgsConstructor
@@ -39,14 +37,13 @@ public class AsistenciaService {
     private static final String QR_SOCIO_PREFIX = "SPARTAN_GYM_ASISTENCIA";
     private static final String QR_WEB_PREFIX = "SPARTAN_GYM_VALIDACION_WEB";
     private static final long QR_TTL_SECONDS = 180;
-    private static final long QR_SESSION_RETENTION_SECONDS = 600;
     private static final String HMAC_ALGORITHM = "HmacSHA256";
 
     private final AsistenciaRepository asistenciaRepository;
     private final SocioRepository socioRepository;
     private final UsuarioRepository usuarioRepository;
     private final MembresiaSocioRepository membresiaSocioRepository;
-    private final ConcurrentMap<UUID, QrWebSession> sesionesQrWeb = new ConcurrentHashMap<>();
+    private final QrWebSessionStore sesionesQrWeb;
 
     @Transactional
     public Asistencia registrarEntrada(AsistenciaRequest request) {
@@ -79,7 +76,6 @@ public class AsistenciaService {
 
     public AsistenciaQrTokenResponse generarQrValidacionWeb(String emailUsuario) {
         buscarUsuarioAutenticado(emailUsuario);
-        limpiarSesionesQrWeb();
 
         Instant generado = Instant.now();
         Instant expira = generado.plusSeconds(QR_TTL_SECONDS);
@@ -89,7 +85,7 @@ public class AsistenciaService {
         String firma = firmar(datos);
         String token = QR_WEB_PREFIX + "|" + datos + "|" + firma;
         String tokenHash = hashToken(token);
-        sesionesQrWeb.put(sessionId, new QrWebSession(sessionId, tokenHash, expira));
+        sesionesQrWeb.guardar(sessionId, tokenHash, expira);
 
         return AsistenciaQrTokenResponse.builder()
                 .token(token)
@@ -127,7 +123,7 @@ public class AsistenciaService {
         Socio socio = socioRepository.findById(usuario.getId())
                 .orElseThrow(() -> new AccesoDenegadoException("El usuario autenticado no tiene perfil de socio."));
         QrWebPayload payload = validarTokenQrWeb(request != null ? request.getToken() : null, true);
-        QrWebSession sesion = buscarSesionQrWeb(payload.sessionId());
+        QrWebSessionStore.Session sesion = buscarSesionQrWeb(payload.sessionId());
 
         if (!sesion.tokenHash().equals(payload.tokenHash())) {
             throw new ReglaNegocioException("QR invalido: sesion no coincide con el token.");
@@ -147,7 +143,7 @@ public class AsistenciaService {
 
     public AsistenciaQrValidationResponse consultarEstadoQrValidacion(AsistenciaQrRequest request) {
         QrWebPayload payload = validarTokenQrWeb(request != null ? request.getToken() : null, false);
-        QrWebSession sesion = sesionesQrWeb.get(payload.sessionId());
+        QrWebSessionStore.Session sesion = sesionesQrWeb.buscar(payload.sessionId()).orElse(null);
 
         if (sesion != null && !sesion.tokenHash().equals(payload.tokenHash())) {
             throw new ReglaNegocioException("QR invalido: sesion no coincide con el token.");
@@ -157,9 +153,8 @@ public class AsistenciaService {
     }
 
     public AsistenciaQrValidationResponse consultarEstadoQrValidacion(UUID sessionId) {
-        limpiarSesionesQrWeb();
 
-        QrWebSession sesion = sesionesQrWeb.get(sessionId);
+        QrWebSessionStore.Session sesion = sesionesQrWeb.buscar(sessionId).orElse(null);
         if (sesion == null) {
             return AsistenciaQrValidationResponse.builder()
                     .sessionId(sessionId)
@@ -310,8 +305,7 @@ public class AsistenciaService {
     }
 
     private QrWebSession buscarSesionQrWeb(UUID sessionId) {
-        limpiarSesionesQrWeb();
-        QrWebSession sesion = sesionesQrWeb.get(sessionId);
+        QrWebSessionStore.Session sesion = sesionesQrWeb.buscar(sessionId).orElse(null);
 
         if (sesion == null) {
             throw new ReglaNegocioException("QR expirado o sesion no encontrada. Genera uno nuevo.");
@@ -324,12 +318,6 @@ public class AsistenciaService {
         return sesion;
     }
 
-    private void limpiarSesionesQrWeb() {
-        Instant ahora = Instant.now();
-        sesionesQrWeb.entrySet().removeIf((entry) ->
-                ahora.isAfter(entry.getValue().expira().plusSeconds(QR_SESSION_RETENTION_SECONDS))
-        );
-    }
 
     private String firmar(String datos) {
         try {
@@ -359,9 +347,4 @@ public class AsistenciaService {
     private record QrWebPayload(UUID sessionId, String tokenHash, boolean expirado) {
     }
 
-    private record QrWebSession(UUID sessionId, String tokenHash, Instant expira) {
-        private boolean expirado() {
-            return Instant.now().isAfter(expira);
-        }
-    }
 }
