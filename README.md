@@ -1,62 +1,164 @@
-# SpartanGym · Plataforma de gestión de gimnasios
+# SpartanGym
 
-> Proyecto en evolución. El repositorio conserva el nombre histórico **SpartanGym** mientras se define una identidad independiente para la futura plataforma SaaS multi-gimnasio.
+Sistema de gestión para gimnasios compuesto por una API REST, una aplicación web
+para administración y recepción, y una aplicación Android para socios y
+entrenadores.
 
-Sistema de gestión con panel web para administración/recepción, aplicación móvil Android y API REST. El estado actual es una aplicación con soporte de sucursales; **no debe considerarse un SaaS multi-tenant aislado y listo para producción** hasta completar las mejoras de autorización, segregación y pruebas indicadas abajo.
+## Componentes
 
-## Estructura
-
-| Carpeta | Tecnología | Propósito |
+| Componente | Ubicación | Tecnología |
 | --- | --- | --- |
-| `SpartanGymAPI/` | Java, Spring Boot, Spring Security, PostgreSQL | API, autenticación, pagos, socios, inventario, reportes y QR |
-| `SpartanGymWeb/` | React, Vite, Tailwind | Interfaz web administrativa y de recepción |
-| `SpartanGymApp/` | Kotlin, Jetpack Compose | Aplicación Android |
-| `spartan_gym_schema.sql` | PostgreSQL | Esquema de referencia |
-| `docs/` | Markdown | Arquitectura, desarrollo, migración y auditoría |
+| API | `SpartanGymAPI` | Spring Boot 4, Java 17, PostgreSQL, JWT |
+| Web | `SpartanGymWeb` | React 19, Vite, Tailwind CSS |
+| Android | `SpartanGymApp` | Kotlin, Jetpack Compose, Retrofit |
 
-### Estado de la modernización
-- ✅ React existente; TypeScript preparado de manera incremental mediante `tsconfig.json`, tipos iniciales y coexistencia JS/TS.
-- ✅ Soporte **opt-in** de Redis como almacenamiento compartido de sesiones QR web; por defecto permanece el almacenamiento en memoria.
-- ✅ Pipeline CI propuesto con Maven, npm y Android.
-- ⏳ Migración completa del frontend a TypeScript, tests web, multi-tenancy, refuerzo de autorizaciones y calidad visual verificable: pendientes.
+La API expone autenticación, socios, personal, membresías, pagos, asistencias,
+rutinas, inventario, ventas, finanzas, reportes, sucursales y notificaciones.
 
-## Iniciar en desarrollo
+## Requisitos
 
-**Requisitos:** JDK 21, Node.js 22, PostgreSQL y Android Studio/SDK para la app.
+- Git
+- Java 17 o superior
+- Node.js LTS y npm
+- Android Studio con Android SDK para trabajar en la aplicación móvil
+- PostgreSQL para ejecutar la API localmente
 
-1. Clonar: `git clone https://github.com/THEGABOALE/SpartanGym.git`
-2. Crear BD PostgreSQL e importar `spartan_gym_schema.sql`; configurar variables `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD` en el entorno.
-3. API: `cd SpartanGymAPI && ./mvnw spring-boot:run` (Windows: `mvnw.cmd`).
-4. Web: `cd SpartanGymWeb && npm ci && npm run dev`. Configurar `VITE_API_BASE_URL` si la API no está en `http://localhost:8080/api`.
-5. Android: abrir `SpartanGymApp` con Android Studio; URL API en `RetrofitClient.kt`.
+## Inicio rápido
 
-Para despliegues en producción es obligatorio configurar un `JWT_SECRET` robusto. **También se debe corregir y configurar `ATTENDANCE_QR_SECRET`**: el fallback fijo actual es un riesgo, registrado entre los pendientes de seguridad. Nunca usar los secretos ni las contraseñas de ejemplo en producción.
+### 1. Clonar y preparar la base de datos
 
-## Redis opcional
-
-El almacenamiento de sesiones QR sigue siendo `memory` por defecto para no romper despliegues de una sola instancia. Para compartir sesiones entre réplicas, configurar:
-
-```dotenv
-APP_QR_SESSION_STORE=redis
-SPRING_DATA_REDIS_URL=rediss://<usuario>:<contraseña>@<host>:<puerto>
+```powershell
+git clone https://github.com/JORGECUBILLO24/SpartanGym.git
+cd SpartanGym
 ```
 
-Usar los valores reales proporcionados por tu proveedor de Redis, únicamente como variables seguras en hosting. No registrar credenciales en archivos versionados. Los registros definitivos de asistencia, las membresías, los pagos y las ventas siguen en PostgreSQL.
+Crea una base de datos PostgreSQL llamada `spartangym_db` y ejecuta
+`spartan_gym_schema.sql`. El esquema se administra mediante ese archivo porque
+Hibernate está configurado con `ddl-auto=none`.
 
-## Desarrollo, pruebas y documentación
+### 2. Configurar y ejecutar la API
 
-- [Arquitectura y evolución SaaS](docs/ARCHITECTURE.md)
-- [Configuración de desarrollo y CI](docs/DEVELOPMENT.md)
-- [Auditoría estática de UI/UX](docs/UI_UX_AUDIT.md)
-- [Migración progresiva a React + TypeScript](docs/TYPESCRIPT_MIGRATION.md)
-- [Issues](https://github.com/THEGABOALE/SpartanGym/issues) — mejoras priorizadas, sin afirmar que estén implementadas
+Variables mínimas para desarrollo local:
 
-Antes de fusionar una rama, ejecutar `./mvnw verify` (API), `npm run lint && npm run build` (web) y `./gradlew testDebugUnitTest assembleDebug` (Android), además de comprobar los resultados de GitHub Actions. El CI recién añadido **todavía requiere su primera validación en GitHub**.
+```powershell
+$env:SPRING_PROFILES_ACTIVE = "local"
+$env:SPRING_DATASOURCE_URL = "jdbc:postgresql://localhost:5432/spartangym_db"
+$env:SPRING_DATASOURCE_USERNAME = "postgres"
+$env:SPRING_DATASOURCE_PASSWORD = "tu-clave-local"
+$env:JWT_SECRET = "una-clave-local-larga-y-segura"
+```
 
-## Seguridad y contribuciones
+Desde `SpartanGymAPI`:
 
-Mantener PR pequeños y revisión por módulo. No subir claves, secretos, respaldos de BD, tokens, `.env`, dependencias descargadas ni cachés locales. La selección de sucursal enviada por cliente no constituye autorización; el backend debe validar permisos por organización, sucursal y recurso. Validar migraciones de BD antes de desplegar.
+```powershell
+.\mvnw.cmd spring-boot:run
+```
 
-## Nota sobre diseño y marca
+La API queda disponible en `http://localhost:8080`.
 
-La UI actual conserva textos e imágenes de la marca histórica Spartan Gym. La evolución multiempresa deberá abstraer colores, logotipos, textos e información comercial por organización, preservando contraste, navegación accesible y responsive.
+Para no repetir variables en cada terminal también puedes crear
+`SpartanGymAPI/src/main/resources/application-local.properties`. Ese archivo
+está excluido de Git y no debe contener credenciales que se quieran compartir.
+
+### 3. Configurar y ejecutar el web
+
+Desde `SpartanGymWeb`:
+
+```powershell
+npm install
+Copy-Item .env.example .env
+npm run dev
+```
+
+Para desarrollo local, usa esta URL en `.env`:
+
+```dotenv
+VITE_API_BASE_URL=http://localhost:8080/api
+```
+
+El web queda disponible normalmente en `http://localhost:5173`.
+
+Comandos de validación:
+
+```powershell
+npm run lint
+npm run build
+```
+
+### 4. Configurar y ejecutar Android
+
+Abre `SpartanGymApp` desde Android Studio y espera la sincronización de Gradle.
+Si Gradle no encuentra el SDK, crea `SpartanGymApp/local.properties` con una ruta
+local, por ejemplo:
+
+```properties
+sdk.dir=C:\\Users\\TU_USUARIO\\AppData\\Local\\Android\\Sdk
+```
+
+La URL de la API se configura mediante propiedades de Gradle:
+
+```powershell
+.\gradlew.bat test
+.\gradlew.bat assembleDebug -PSPARTANGYM_API_BASE_URL_DEBUG=http://10.0.2.2:8080/
+```
+
+`10.0.2.2` apunta al equipo anfitrión cuando se usa el emulador Android. En un
+dispositivo físico debe usarse la IP accesible del equipo que ejecuta la API.
+
+## Despliegue
+
+- `render.yaml` contiene la definición del servicio de API para Render.
+- `SpartanGymWeb/.env.example` documenta la URL pública de la API para Vercel u
+  otro hosting estático.
+- Las variables de producción deben configurarse en el proveedor de despliegue;
+  nunca deben incluirse en Git.
+
+Variables importantes de producción:
+
+| Variable | Uso |
+| --- | --- |
+| `SPRING_DATASOURCE_URL` | URL JDBC de PostgreSQL |
+| `SPRING_DATASOURCE_USERNAME` | Usuario de PostgreSQL |
+| `SPRING_DATASOURCE_PASSWORD` | Contraseña de PostgreSQL |
+| `JWT_SECRET` | Clave de firma de tokens |
+| `APP_CORS_ORIGINS` | Orígenes web permitidos, separados por coma |
+| `APP_WEB_RESET_PASSWORD_URL` | URL web para restablecer contraseñas |
+| `MAIL_USERNAME` y `MAIL_PASSWORD` | Correo SMTP opcional |
+
+## Pruebas
+
+API:
+
+```powershell
+cd SpartanGymAPI
+.\mvnw.cmd test
+```
+
+Web:
+
+```powershell
+cd SpartanGymWeb
+npm install
+npm run lint
+npm run build
+```
+
+Android:
+
+```powershell
+cd SpartanGymApp
+.\gradlew.bat test
+```
+
+El workflow de GitHub Actions en `.github/workflows/ci.yml` ejecuta estas
+validaciones automáticamente para los cambios enviados al repositorio.
+
+## Seguridad y configuración
+
+- No subas `.env`, `application-local.properties`, `local.properties`, claves,
+  keystores ni archivos generados por Android Studio.
+- En producción usa un `JWT_SECRET` fuerte y exclusivo.
+- `VITE_*` se incorpora al bundle público del navegador; nunca pongas secretos
+  en esas variables.
+- La API devuelve errores estructurados y responde `401` o `403` según
+  corresponda.
