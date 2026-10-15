@@ -68,7 +68,11 @@ public class AsistenciaController {
         return ResponseEntity.ok(asistenciaService.consultarEstadoQrValidacion(sessionId));
     }
 
+    // El socioId viaja por URL: sin el chequeo de propiedad cualquier usuario autenticado
+    // podia leer las asistencias de otro cambiando el UUID. El entrenador no las necesita.
     @GetMapping("/socio/{socioId}")
+    @PreAuthorize("hasAnyRole('SUPERADMIN', 'ADMIN', 'RECEPCIONISTA') "
+            + "or @accesoSocio.esElMismo(authentication, #socioId)")
     public ResponseEntity<List<AsistenciaResponse>> obtenerHistorialSocio(@PathVariable UUID socioId) {
         return ResponseEntity.ok(asistenciaService.obtenerHistorial(socioId).stream()
                 .map(AsistenciaResponse::desde)
