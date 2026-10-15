@@ -5,7 +5,7 @@ import ni.edu.uam.SpartanGymAPI.dto.AsistenciaQrRequest;
 import ni.edu.uam.SpartanGymAPI.dto.AsistenciaQrTokenResponse;
 import ni.edu.uam.SpartanGymAPI.dto.AsistenciaQrValidationResponse;
 import ni.edu.uam.SpartanGymAPI.dto.AsistenciaRequest;
-import ni.edu.uam.SpartanGymAPI.models.Asistencia;
+import ni.edu.uam.SpartanGymAPI.dto.AsistenciaResponse;
 import ni.edu.uam.SpartanGymAPI.services.AsistenciaService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -24,8 +24,8 @@ public class AsistenciaController {
 
     @PostMapping("/check-in")
     @PreAuthorize("hasAnyAuthority('ROLE_SUPERADMIN', 'ROLE_ADMIN', 'ROLE_RECEPCIONISTA')")
-    public ResponseEntity<Asistencia> registrarCheckIn(@RequestBody AsistenciaRequest request) {
-        return ResponseEntity.ok(asistenciaService.registrarEntrada(request));
+    public ResponseEntity<AsistenciaResponse> registrarCheckIn(@RequestBody AsistenciaRequest request) {
+        return ResponseEntity.ok(AsistenciaResponse.desde(asistenciaService.registrarEntrada(request)));
     }
 
     @GetMapping("/qr-activo")
@@ -69,7 +69,9 @@ public class AsistenciaController {
     }
 
     @GetMapping("/socio/{socioId}")
-    public ResponseEntity<List<Asistencia>> obtenerHistorialSocio(@PathVariable UUID socioId) {
-        return ResponseEntity.ok(asistenciaService.obtenerHistorial(socioId));
+    public ResponseEntity<List<AsistenciaResponse>> obtenerHistorialSocio(@PathVariable UUID socioId) {
+        return ResponseEntity.ok(asistenciaService.obtenerHistorial(socioId).stream()
+                .map(AsistenciaResponse::desde)
+                .toList());
     }
 }
