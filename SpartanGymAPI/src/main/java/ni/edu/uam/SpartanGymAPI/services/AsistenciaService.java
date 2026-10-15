@@ -304,7 +304,7 @@ public class AsistenciaService {
         return expirado;
     }
 
-    private QrWebSession buscarSesionQrWeb(UUID sessionId) {
+    private QrWebSessionStore.Session buscarSesionQrWeb(UUID sessionId) {
         QrWebSessionStore.Session sesion = sesionesQrWeb.buscar(sessionId).orElse(null);
 
         if (sesion == null) {
