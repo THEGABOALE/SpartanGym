@@ -1,6 +1,9 @@
+import { cerrarSesionActual } from '../utils/cuentaActual';
+import type { Sucursal, SesionUsuario, TipoMembresia, UsuarioGuardado } from '../types/domain';
+
 const FALLBACK_API_BASE_URL = 'http://localhost:8080/api';
 
-const normalizeApiBaseUrl = (rawValue) => {
+const normalizeApiBaseUrl = (rawValue: unknown): string => {
   const value = String(rawValue ?? '').trim();
   if (!value) return FALLBACK_API_BASE_URL;
   return value.replace(/\/+$/, '');
@@ -9,34 +12,36 @@ const normalizeApiBaseUrl = (rawValue) => {
 const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL);
 
 export const authStorage = {
-  getToken: () => localStorage.getItem('spartan_token'),
-  getUser: () => {
+  getToken: (): string | null => localStorage.getItem('spartan_token'),
+  getUser: (): UsuarioGuardado | null => {
     const rawUser = localStorage.getItem('spartan_user');
     if (!rawUser) return null;
 
     try {
-      return JSON.parse(rawUser);
+      return JSON.parse(rawUser) as UsuarioGuardado;
     } catch {
       return null;
     }
   },
-  setSession: ({ id, token, email, rol }) => {
+  setSession: ({ id, token, email, rol }: SesionUsuario): void => {
     localStorage.setItem('spartan_token', token);
     localStorage.setItem('spartan_user', JSON.stringify({ id, email, rol }));
   },
-  clear: () => {
+  clear: (): void => {
     localStorage.removeItem('spartan_token');
     localStorage.removeItem('spartan_user');
   },
 };
 
-import { cerrarSesionActual } from '../utils/cuentaActual';
-
 // Error de la API con el mismo mensaje de siempre en `.message`, más el status HTTP y el
 // `codigo` estable del contrato de errores (RFC 9457). Los usos existentes de
-// `error.message` no cambian.
+// `error.message` no cambian. Un fallo de red (CORS, sin conexión) NO es un ApiError: no
+// tiene `status`, y así la pantalla puede distinguirlo de un rechazo de la API.
 export class ApiError extends Error {
-  constructor(message, status, codigo = null) {
+  readonly status: number;
+  readonly codigo: string | null;
+
+  constructor(message: string, status: number, codigo: string | null = null) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
@@ -44,7 +49,20 @@ export class ApiError extends Error {
   }
 }
 
-export async function apiRequest(path, options = {}) {
+export interface ApiRequestOptions extends Omit<RequestInit, 'headers'> {
+  headers?: Record<string, string>;
+  /** No enviar el token (endpoints públicos) ni tratar un 401 como sesión vencida. */
+  skipAuth?: boolean;
+  /** No enviar el header X-Sucursal-Id con la sucursal global elegida. */
+  ignoreSucursal?: boolean;
+}
+
+interface ProblemaRespuesta {
+  detail?: string;
+  codigo?: string | null;
+}
+
+export async function apiRequest<T = unknown>(path: string, options: ApiRequestOptions = {}): Promise<T> {
   const token = options.skipAuth ? null : authStorage.getToken();
   const sucursalId = localStorage.getItem('global_sucursal_id');
   const { skipAuth, ignoreSucursal, ...fetchOptions } = options;
@@ -72,7 +90,7 @@ export async function apiRequest(path, options = {}) {
     }
     const tipoError = response.headers.get('content-type') || '';
     if (tipoError.includes('application/problem+json')) {
-      const problema = await response.json().catch(() => null);
+      const problema = (await response.json().catch(() => null)) as ProblemaRespuesta | null;
       throw new ApiError(
         problema?.detail || `Error ${response.status} al conectar con la API`,
         response.status,
@@ -83,39 +101,73 @@ export async function apiRequest(path, options = {}) {
     throw new ApiError(errorBody || `Error ${response.status} al conectar con la API`, response.status);
   }
 
-  if (response.status === 204) return null;
+  if (response.status === 204) return null as T;
 
   const contentType = response.headers.get('content-type') || '';
   // Cualquier variante JSON (application/json, application/*+json) se parsea como JSON.
-  if (!contentType.includes('json')) return response.text();
+  if (!contentType.includes('json')) return (await response.text()) as T;
 
-  return response.json();
+  return (await response.json()) as T;
+}
+
+// ---------------------------------------------------------------------------------------
+// Cuerpos de las peticiones. Las respuestas se tipan de a poco: donde la forma todavía no está
+// modelada se devuelve `unknown` y quien llama indica el tipo con apiRequest<T>().
+// ---------------------------------------------------------------------------------------
+
+export interface RegistroSocioRequest {
+  nombres: string;
+  apellidos: string;
+  email: string;
+  password: string;
+  telefono?: string;
+  sucursalId?: string;
+}
+
+export interface RegistroPersonalRequest extends RegistroSocioRequest {
+  rol: string;
+  especialidad?: string;
+}
+
+export interface TipoMembresiaRequest {
+  nombre: string;
+  duracionDias: number;
+  precio: number;
+}
+
+export interface MovimientoFinancieroRequest {
+  concepto: string;
+  monto: number;
+  tipo: 'ingreso' | 'gasto';
+  metodo?: string;
+  categoria?: string;
+  sucursalId?: string;
 }
 
 export const authApi = {
-  login: (email, password) => apiRequest('/auth/login', {
+  login: (email: string, password: string) => apiRequest<SesionUsuario>('/auth/login', {
     method: 'POST',
     body: JSON.stringify({ email, password }),
   }),
-  solicitarRestablecimiento: (email) => apiRequest('/auth/forgot-password', {
+  solicitarRestablecimiento: (email: string) => apiRequest('/auth/forgot-password', {
     method: 'POST',
     body: JSON.stringify({ email }),
   }),
-  restablecerPassword: ({ token, password }) => apiRequest('/auth/reset-password', {
+  restablecerPassword: ({ token, password }: { token: string; password: string }) => apiRequest('/auth/reset-password', {
     method: 'POST',
     body: JSON.stringify({ token, password }),
   }),
-  registerSocio: ({ nombres, apellidos, email, password, telefono, sucursalId }) => apiRequest('/auth/register', {
+  registerSocio: ({ nombres, apellidos, email, password, telefono, sucursalId }: RegistroSocioRequest) => apiRequest('/auth/register', {
     method: 'POST',
     body: JSON.stringify({ nombres, apellidos, email, password, telefono, sucursalId }),
   }),
 };
 
 export const usuariosApi = {
-  enviarEnlacePassword: (usuarioId) => apiRequest(`/usuarios/${usuarioId}/password-reset-link`, {
+  enviarEnlacePassword: (usuarioId: string) => apiRequest(`/usuarios/${usuarioId}/password-reset-link`, {
     method: 'POST',
   }),
-  cambiarPassword: (usuarioId, password) => apiRequest(`/usuarios/${usuarioId}/password`, {
+  cambiarPassword: (usuarioId: string, password: string) => apiRequest(`/usuarios/${usuarioId}/password`, {
     method: 'PUT',
     body: JSON.stringify({ password }),
   }),
@@ -123,25 +175,25 @@ export const usuariosApi = {
 
 export const personalApi = {
   listar: () => apiRequest('/personal'),
-  registrar: ({ nombres, apellidos, email, password, telefono, rol, especialidad, sucursalId }) => apiRequest('/personal/registrar', {
+  registrar: ({ nombres, apellidos, email, password, telefono, rol, especialidad, sucursalId }: RegistroPersonalRequest) => apiRequest('/personal/registrar', {
     method: 'POST',
     body: JSON.stringify({ nombres, apellidos, email, password, telefono, rol, especialidad, sucursalId }),
   }),
-  actualizarPerfil: (perfil) => apiRequest('/personal/me', {
+  actualizarPerfil: (perfil: Record<string, unknown>) => apiRequest('/personal/me', {
     method: 'PUT',
     body: JSON.stringify(perfil),
   }),
-  actualizarRol: (usuarioId, rol) => apiRequest(`/personal/${usuarioId}/rol`, {
+  actualizarRol: (usuarioId: string, rol: string) => apiRequest(`/personal/${usuarioId}/rol`, {
     method: 'PATCH',
     body: JSON.stringify({ rol }),
   }),
-  eliminar: (usuarioId) => apiRequest(`/personal/${usuarioId}`, { method: 'DELETE' }),
+  eliminar: (usuarioId: string) => apiRequest(`/personal/${usuarioId}`, { method: 'DELETE' }),
 };
 
 export const sociosApi = {
-  listar: (options = {}) => apiRequest('/socios', options),
-  estado: (socioId) => apiRequest(`/socios/estado/${socioId}`),
-  registrar: ({ nombres, apellidos, email, password, telefono, sucursalId }) => authApi.registerSocio({
+  listar: (options: ApiRequestOptions = {}) => apiRequest('/socios', options),
+  estado: (socioId: string) => apiRequest(`/socios/estado/${socioId}`),
+  registrar: ({ nombres, apellidos, email, password, telefono, sucursalId }: RegistroSocioRequest) => authApi.registerSocio({
     nombres,
     apellidos,
     email,
@@ -158,53 +210,53 @@ export const catalogoApi = {
 
 export const rutinasApi = {
   listar: () => apiRequest('/rutinas'),
-  crear: (rutina) => apiRequest('/rutinas', {
+  crear: (rutina: Record<string, unknown>) => apiRequest('/rutinas', {
     method: 'POST',
     body: JSON.stringify(rutina),
   }),
-  crearGlobal: (rutina) => apiRequest('/rutinas/global', {
+  crearGlobal: (rutina: Record<string, unknown>) => apiRequest('/rutinas/global', {
     method: 'POST',
     body: JSON.stringify({ ...rutina, esGlobal: true, idSocio: null }),
   }),
 };
 
 export const membresiasApi = {
-  tipos: () => apiRequest('/membresias/tipos'),
-  crearTipo: ({ nombre, duracionDias, precio }) => apiRequest('/membresias/tipos', {
+  tipos: () => apiRequest<TipoMembresia[]>('/membresias/tipos'),
+  crearTipo: ({ nombre, duracionDias, precio }: TipoMembresiaRequest) => apiRequest<TipoMembresia>('/membresias/tipos', {
     method: 'POST',
     body: JSON.stringify({ nombre, duracionDias, precio }),
   }),
-  eliminarTipo: (id) => apiRequest(`/membresias/tipos/${id}`, { method: 'DELETE' }),
-  comprar: ({ tipoMembresiaId, metodoPago }) => apiRequest('/membresias/comprar', {
+  eliminarTipo: (id: number) => apiRequest(`/membresias/tipos/${id}`, { method: 'DELETE' }),
+  comprar: ({ tipoMembresiaId, metodoPago }: { tipoMembresiaId: number; metodoPago: string }) => apiRequest('/membresias/comprar', {
     method: 'POST',
     body: JSON.stringify({ tipoMembresiaId, metodoPago }),
   }),
 };
 
 export const pagosApi = {
-  renovar: ({ idSocio, idTipoMembresia, metodoPago }) => apiRequest('/pagos/renovar', {
+  renovar: ({ idSocio, idTipoMembresia, metodoPago }: { idSocio: string; idTipoMembresia: number; metodoPago: string }) => apiRequest('/pagos/renovar', {
     method: 'POST',
     body: JSON.stringify({ idSocio, idTipoMembresia, metodoPago }),
   }),
 };
 
 export const asistenciasApi = {
-  checkIn: (idSocio) => apiRequest('/asistencias/check-in', {
+  checkIn: (idSocio: string) => apiRequest('/asistencias/check-in', {
     method: 'POST',
     body: JSON.stringify({ idSocio }),
   }),
   qrValidacion: () => apiRequest('/asistencias/qr-validacion'),
-  estadoQrValidacionPorToken: (token) => apiRequest('/asistencias/qr-validacion/estado', {
+  estadoQrValidacionPorToken: (token: string) => apiRequest('/asistencias/qr-validacion/estado', {
     method: 'POST',
     body: JSON.stringify({ token }),
     skipAuth: true,
   }),
-  historialSocio: (socioId) => apiRequest(`/asistencias/socio/${socioId}`),
+  historialSocio: (socioId: string) => apiRequest(`/asistencias/socio/${socioId}`),
 };
 
 export const reportesApi = {
   resumen: () => apiRequest('/reportes/resumen'),
-  generar: (tipo) => apiRequest('/reportes/generar', {
+  generar: (tipo: string) => apiRequest('/reportes/generar', {
     method: 'POST',
     body: JSON.stringify({ tipo }),
   }),
@@ -212,42 +264,42 @@ export const reportesApi = {
 
 export const inventarioApi = {
   listar: () => apiRequest('/inventario'),
-  crear: (producto) => apiRequest('/inventario', {
+  crear: (producto: Record<string, unknown>) => apiRequest('/inventario', {
     method: 'POST',
     body: JSON.stringify(producto),
   }),
-  actualizar: (id, producto) => apiRequest(`/inventario/${id}`, {
+  actualizar: (id: string, producto: Record<string, unknown>) => apiRequest(`/inventario/${id}`, {
     method: 'PUT',
     body: JSON.stringify(producto),
   }),
-  eliminar: (id) => apiRequest(`/inventario/${id}`, { method: 'DELETE' }),
+  eliminar: (id: string) => apiRequest(`/inventario/${id}`, { method: 'DELETE' }),
 };
 
 export const ventasApi = {
   listarProductos: () => apiRequest('/ventas/productos'),
-  venderProducto: (venta) => apiRequest('/ventas/productos', {
+  venderProducto: (venta: Record<string, unknown>) => apiRequest('/ventas/productos', {
     method: 'POST',
     body: JSON.stringify(venta),
   }),
-  facturaProducto: (id) => apiRequest(`/ventas/productos/${id}`),
+  facturaProducto: (id: string) => apiRequest(`/ventas/productos/${id}`),
 };
 
 export const sucursalesApi = {
-  listar: () => apiRequest('/sucursales'),
-  crear: (sucursal) => apiRequest('/sucursales', {
+  listar: () => apiRequest<Sucursal[]>('/sucursales'),
+  crear: (sucursal: Partial<Sucursal>) => apiRequest<Sucursal>('/sucursales', {
     method: 'POST',
     body: JSON.stringify(sucursal),
   }),
-  actualizar: (id, sucursal) => apiRequest(`/sucursales/${id}`, {
+  actualizar: (id: string, sucursal: Partial<Sucursal>) => apiRequest<Sucursal>(`/sucursales/${id}`, {
     method: 'PUT',
     body: JSON.stringify(sucursal),
   }),
-  eliminar: (id) => apiRequest(`/sucursales/${id}`, { method: 'DELETE' }),
+  eliminar: (id: string) => apiRequest(`/sucursales/${id}`, { method: 'DELETE' }),
 };
 
 export const finanzasApi = {
   listar: () => apiRequest('/finanzas'),
-  crear: (movimiento) => apiRequest('/finanzas', {
+  crear: (movimiento: MovimientoFinancieroRequest) => apiRequest('/finanzas', {
     method: 'POST',
     body: JSON.stringify(movimiento),
   }),
@@ -255,7 +307,7 @@ export const finanzasApi = {
 
 export const operacionApi = {
   perfil: () => apiRequest('/operacion/me'),
-  actualizarFoto: (fotoUrl) => apiRequest('/operacion/me/foto', {
+  actualizarFoto: (fotoUrl: string) => apiRequest('/operacion/me/foto', {
     method: 'PUT',
     body: JSON.stringify({ fotoUrl }),
   }),
@@ -264,9 +316,9 @@ export const operacionApi = {
   pagos: () => apiRequest('/operacion/pagos'),
   membresias: () => apiRequest('/operacion/membresias'),
   notificaciones: () => apiRequest('/operacion/notificaciones'),
-  marcarNotificacionLeida: (id) => apiRequest(`/operacion/notificaciones/${id}/leer`, { method: 'PATCH' }),
-  pagosSocio: (socioId) => apiRequest(`/operacion/pagos/socio/${socioId}`),
-  rutinasSocio: (socioId) => apiRequest(`/operacion/socio/${socioId}/rutinas`),
+  marcarNotificacionLeida: (id: string) => apiRequest(`/operacion/notificaciones/${id}/leer`, { method: 'PATCH' }),
+  pagosSocio: (socioId: string) => apiRequest(`/operacion/pagos/socio/${socioId}`),
+  rutinasSocio: (socioId: string) => apiRequest(`/operacion/socio/${socioId}/rutinas`),
   entrenadorDashboard: () => apiRequest('/operacion/entrenador/dashboard'),
   entrenadorClientes: () => apiRequest('/operacion/entrenador/clientes'),
   entrenadorPerfil: () => apiRequest('/operacion/entrenador/perfil'),
@@ -274,7 +326,7 @@ export const operacionApi = {
 
 export const configuracionApi = {
   obtener: () => apiRequest('/configuracion'),
-  guardar: (configuracion) => apiRequest('/configuracion', {
+  guardar: (configuracion: Record<string, unknown>) => apiRequest('/configuracion', {
     method: 'PUT',
     body: JSON.stringify(configuracion),
   }),
@@ -282,7 +334,7 @@ export const configuracionApi = {
 
 export const notificacionesApi = {
   listarGlobales: () => apiRequest('/notificaciones/globales'),
-  crearGlobal: ({ tipo, titulo, mensaje }) => apiRequest('/notificaciones/globales', {
+  crearGlobal: ({ tipo, titulo, mensaje }: { tipo: string; titulo: string; mensaje: string }) => apiRequest('/notificaciones/globales', {
     method: 'POST',
     body: JSON.stringify({ tipo, titulo, mensaje }),
   }),

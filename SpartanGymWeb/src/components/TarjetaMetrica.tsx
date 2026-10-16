@@ -1,4 +1,16 @@
-const TarjetaMetrica = ({ titulo, valor, detalle, icono: Icono, color = 'text-gray-400' }) => (
+import type { LucideIcon } from 'lucide-react';
+import type { ReactNode } from 'react';
+
+interface TarjetaMetricaProps {
+  titulo: string;
+  valor: ReactNode;
+  detalle?: ReactNode;
+  icono: LucideIcon;
+  /** Clase de Tailwind con el color del icono. */
+  color?: string;
+}
+
+const TarjetaMetrica = ({ titulo, valor, detalle, icono: Icono, color = 'text-gray-400' }: TarjetaMetricaProps) => (
   <article className="tarjeta-sistema relative overflow-hidden rounded-2xl border border-white/10 bg-[#090909] p-5 shadow-xl">
     <p className="mb-1 text-[10px] font-black uppercase tracking-widest text-gray-500">{titulo}</p>
     <h3 className="text-2xl font-black text-white">{valor}</h3>
